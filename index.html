@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gallery Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'nh-bg': '#2f3136',
+                        'nh-bg-dark': '#202225',
+                        'nh-bg-light': '#36393f',
+                        'nh-pink': '#ed2553',
+                        'nh-gray-text': '#9d9d9d',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .hidden { display: none !important; }
+        .loader-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .loader { border: 8px solid #4f545c; border-top: 8px solid #ed2553; border-radius: 50%; width: 60px; height: 60px; animation: spin 1.5s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-nh-bg text-white">
+    <header class="bg-nh-bg-dark p-4 shadow-lg">
+        <div class="container mx-auto flex justify-between items-center">
+            <a href="#" onclick="populateDashboard(1)" class="text-2xl font-bold text-white hover:text-nh-pink transition-colors">Gallery Viewer</a>
+            <div class="w-full max-w-lg relative">
+                <input id="search-input" type="text" placeholder="Search..." class="w-full bg-nh-bg-light border border-nh-bg-light text-white rounded-md py-2 px-4 focus:outline-none focus:ring-2 focus:ring-nh-pink">
+                <button onclick="handleSearch()" class="absolute right-0 top-0 h-full px-4 text-white hover:text-nh-pink">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main id="main-content" class="container mx-auto p-4"></main>
+    <div id="loader" class="loader-container hidden"><div class="loader"></div></div>
+
+    <script>
+        // ===================================
+        //  API Configuration - Pointing to OUR Backend
+        // ===================================
+        const API_BASE_URL = '/api'; // This now points to our own Vercel serverless function
+        const THUMB_BASE_URL = 'https://t.nhentai.net/galleries';
+
+        let currentPage = 1;
+        let currentQuery = '';
+        let totalPages = 1;
+
+        async function apiRequest(params) {
+            const query = new URLSearchParams(params).toString();
+            const requestUrl = `${API_BASE_URL}?${query}`;
+            try {
+                const resp = await fetch(requestUrl);
+                if (!resp.ok) {
+                    const errorData = await resp.json();
+                    throw new Error(errorData.details || `API request failed with status: ${resp.status}`);
+                }
+                return await resp.json();
+            } catch (error) {
+                console.error(`[API ERROR] Failed to fetch ${requestUrl}`, error);
+                throw error;
+            }
+        }
+
+        // ===================================
+        //  Page Logic
+        // ===================================
+        async function populateDashboard(page = 1) {
+            showLoader();
+            currentQuery = ''; 
+            currentPage = page;
+            try {
+                const data = await apiRequest({ q: 'popular', page: currentPage });
+                totalPages = data.num_pages;
+                renderGrid(data.books);
+                renderPagination();
+            } catch (error) { renderError(error); } finally { hideLoader(); }
+        }
+        
+        async function handleSearch(page = 1) {
+            const query = document.getElementById('search-input').value.trim();
+            if (!query && !currentQuery) return;
+            showLoader();
+            if (query) {
+                currentQuery = query; // Update query only if a new one is provided
+                currentPage = 1; // Reset to page 1 for a new search
+            } else {
+                currentPage = page; // Use the provided page number for pagination
+            }
+            try {
+                const data = await apiRequest({ q: 'search', term: currentQuery, page: currentPage });
+                totalPages = data.num_pages;
+                renderGrid(data.books);
+                renderPagination();
+            } catch (error) { renderError(error); } finally { hideLoader(); }
+        }
+
+        async function changePage(direction) {
+            const newPage = currentPage + direction;
+            if (newPage < 1 || newPage > totalPages) return;
+            if (currentQuery) { await handleSearch(newPage); } else { await populateDashboard(newPage); }
+        }
+
+        async function showDetailPage(doujinId) {
+            showLoader();
+            const mainContent = document.getElementById('main-content');
+            try {
+                const doujin = await apiRequest({ q: 'info', id: doujinId });
+                const ext = doujin.images.cover.t === 'j' ? 'jpg' : 'png';
+                const coverUrl = `${THUMB_BASE_URL}/${doujin.mediaId}/cover.${ext}`;
+                const title = doujin.title.english || doujin.title.pretty;
+
+                mainContent.innerHTML = `
+                    <div class="bg-nh-bg-dark p-4 md:p-8 rounded-md">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                            <div>
+                                <img src="${coverUrl.replace('t.nhentai.net', 'i.nhentai.net')}" alt="${title}" class="rounded-md shadow-lg w-full">
+                                <button onclick="showReaderPage('${doujin.id}', 1)" class="mt-4 w-full bg-nh-pink hover:opacity-80 text-white px-4 py-3 rounded-md text-lg font-bold transition-opacity">Read</button>
+                            </div>
+                            <div class="md:col-span-2">
+                                <h1 class="text-2xl font-bold text-white mb-4">${title}</h1>
+                                <div id="tags-container" class="space-y-3 text-sm"></div>
+                            </div>
+                        </div>
+                        <h2 class="text-xl font-bold text-white mt-8 mb-4 border-t border-nh-bg-light pt-4">Pages</h2>
+                        <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-8 gap-2">
+                            ${doujin.page_images.map((imgUrl, index) => {
+                                const pageNum = index + 1;
+                                const ext = doujin.images.pages[index].t === 'j' ? 'jpg' : 'png';
+                                const thumbUrl = `${THUMB_BASE_URL}/${doujin.mediaId}/${pageNum}t.${ext}`;
+                                return `<img src="${thumbUrl}" onclick="showReaderPage('${doujin.id}', ${pageNum})" class="cursor-pointer rounded-md aspect-[3/4] object-cover hover:ring-2 hover:ring-nh-pink" loading="lazy">`
+                            }).join('')}
+                        </div>
+                    </div>`;
+                
+                const tagsByType = doujin.tags.reduce((acc, tag) => {
+                    if (!acc[tag.type]) acc[tag.type] = [];
+                    acc[tag.type].push(tag);
+                    return acc;
+                }, {});
+
+                const tagsContainer = document.getElementById('tags-container');
+                tagsContainer.innerHTML = Object.entries(tagsByType).map(([type, tags]) => `
+                    <div class="flex items-start">
+                        <span class="capitalize text-nh-gray-text w-24 flex-shrink-0">${type}s:</span>
+                        <div class="flex flex-wrap gap-1">${tags.map(t => `<span class="px-2 py-1 text-xs rounded-md text-white bg-nh-bg-light">${t.name}</span>`).join('')}</div>
+                    </div>
+                `).join('') + `<div class="flex items-start"><span class="capitalize text-nh-gray-text w-24 flex-shrink-0">Pages:</span><span class="text-white">${doujin.num_pages}</span></div>`;
+
+            } catch (error) { renderError(error); } finally { hideLoader(); }
+        }
+
+        async function showReaderPage(doujinId, startPage = 1) {
+            showLoader();
+            const mainContent = document.getElementById('main-content');
+            try {
+                const doujin = await apiRequest({ q: 'info', id: doujinId });
+                mainContent.innerHTML = `
+                    <div class="text-center mb-4"><button onclick="showDetailPage('${doujinId}')" class="bg-nh-bg-light hover:bg-nh-pink text-white px-6 py-2 rounded-md transition-colors">← Back to Gallery</button></div>
+                    <div class="flex flex-col items-center">
+                        ${doujin.page_images.map((pageUrl, index) => `<img id="page-${index + 1}" src="${pageUrl}" class="max-w-full md:max-w-4xl mb-1 shadow-lg" loading="lazy">`).join('')}
+                    </div>
+                    <div class="text-center mt-4"><button onclick="showDetailPage('${doujinId}')" class="bg-nh-bg-light hover:bg-nh-pink text-white px-6 py-2 rounded-md transition-colors">← Back to Gallery</button></div>`;
+                
+                setTimeout(() => { document.getElementById(`page-${startPage}`)?.scrollIntoView({ behavior: 'auto', block: 'start' }); }, 100);
+            } catch (error) { renderError(error); } finally { hideLoader(); }
+        }
+
+        // ===================================
+        //  UI Rendering & Utilities
+        // ===================================
+        function renderGrid(books) {
+            const mainContent = document.getElementById('main-content');
+            const gridHTML = books.length > 0
+                ? books.map(doujin => {
+                    const title = doujin.title.english || doujin.title.pretty;
+                    const ext = doujin.images.cover.t === 'j' ? 'jpg' : 'png';
+                    const coverUrl = `${THUMB_BASE_URL}/${doujin.mediaId}/cover.${ext}`;
+                    return `
+                        <div onclick="showDetailPage('${doujin.id}')" class="group cursor-pointer">
+                            <div class="aspect-[3/4] overflow-hidden rounded-md bg-nh-bg-dark"><img src="${coverUrl}" alt="${title}" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110" loading="lazy"></div>
+                            <h3 class="mt-2 text-sm text-gray-300 line-clamp-2 group-hover:text-white">${title}</h3>
+                        </div>`;
+                }).join('')
+                : `<p class="col-span-full text-center text-nh-gray-text">No results found.</p>`;
+            mainContent.innerHTML = `<div id="gallery-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">${gridHTML}</div><div id="pagination-controls" class="flex justify-center items-center mt-8 space-x-4"></div>`;
+        }
+
+        function renderPagination() {
+            const container = document.getElementById('pagination-controls');
+            if (!container) return;
+            const prevDisabled = currentPage <= 1 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-nh-pink';
+            const nextDisabled = currentPage >= totalPages ? 'opacity-50 cursor-not-allowed' : 'hover:bg-nh-pink';
+            container.innerHTML = `
+                <button onclick="changePage(-1)" class="bg-nh-bg-light px-4 py-2 rounded-md transition-colors ${prevDisabled}" ${currentPage <= 1 ? 'disabled' : ''}>Previous</button>
+                <span class="text-nh-gray-text">Page ${currentPage} of ${totalPages}</span>
+                <button onclick="changePage(1)" class="bg-nh-bg-light px-4 py-2 rounded-md transition-colors ${nextDisabled}" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>`;
+        }
+        
+        const loader = document.getElementById('loader');
+        const showLoader = () => loader.classList.remove('hidden');
+        const hideLoader = () => loader.classList.add('hidden');
+        function renderError(error) {
+            const mainContent = document.getElementById('main-content');
+            mainContent.innerHTML = `<div class="text-center p-8 text-red-400"><strong>Error:</strong> ${error.message}</div>`;
+        }
+
+        // ===================================
+        //  App Initialization
+        // ===================================
+        document.addEventListener('DOMContentLoaded', function() {
+            populateDashboard();
+            document.getElementById('search-input').addEventListener('keypress', e => e.key === 'Enter' && handleSearch());
+        });
+    </script>
+</body>
+</html>
